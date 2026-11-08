@@ -1,0 +1,547 @@
+# Przekaznik magistrali C14 (RS485) miedzy panelem NANO XS a sterownikiem Compit AERO 6, ze sterowaniem z HA.
+# Przewody A i B sa ROZCIETE: ESP32 z dwoma modulami RS485 przepisuje kazda ramke z jednej strony na druga
+# (kod w c14_relay.h). Gdy wlaczone jest "Sterowanie z HA", ramka ustawien od panelu jest podmieniana
+# wartosciami z HA zanim trafi do rekuperacji. Wylaczone = przezroczysty przekaznik.
+# Ostatnia zmiana wygrywa: zmiana na panelu przy wlaczonym sterowaniu przepisuje wartosci panelu do HA.
+# Panel pokazuje (diody) zawsze WLASNE ustawienia - nie wie o podmianie.
+#
+# Okablowanie (moduly "RS485 V2.05", opisy pinow z punktu widzenia MODULU, rezystory 120 R "121" usuniete):
+#   Modul P (strona panelu):      TXD -> GPIO8, RXD -> GPIO9, EN -> GPIO10, VCC -> 3V3, GND -> GND
+#                                 A/B -> przewody A/B idace do PANELU, GND -> G
+#   Modul S (strona rekuperacji): TXD -> GPIO4, RXD -> GPIO5, EN -> GPIO6,  VCC -> 3V3, GND -> GND
+#                                 A/B -> zaciski A/B w REKUPERACJI (AERO), GND -> G
+#   G i U miedzy panelem a rekuperacja zostaja polaczone bez zmian (U = 17 V zasilania panelu, nie do ESP).
+#   EN: LOW = odbior, HIGH = nadawanie (sprawdzone testem zaklocenia 2026-11-01).
+#   Zasilanie ESP z dobrej ladowarki - stara wprowadzala szum 16 kHz.
+#
+# Protokol (ustalony podsluchem 2026-11-01): 9600 8N1, ramki 30 bajtow konczace sie 0x23,
+# bajt [2] = suma pozostalych bajtow mod 128. Dane 7-bitowe.
+#   E4:21:xx:63 - stan (od sterownika, odpowiedz na E3:44): [8] wentylatory teraz %, [12..19] 4 temperatury
+#                               (hi<<7 | lo) - 2048, w 0,1 C: nawiew, czerpnia, wyrzutnia, wywiew
+#   E4:21:xx:3E - ustawienia (od panelu): [16] predkosc zadana %, [17] dzien %, [18] noc %,
+#                               [19] 0x40 | bit0 praca | bit1 tryb dzien
+#   Cykl ok. 4 s: F0:44, E3:44, E4:21:63, A9:44, 81:44, E4:21:3E.
+
+substitutions:
+  name: rekuperacja
+
+esphome:
+  name: ${name}
+  friendly_name: Rekuperacja
+  includes:
+    - c14_relay.h
+  on_boot:
+    priority: 600
+    then:
+      - lambda: |-
+          c14::nadpisz_dzien = (uint8_t) (isnan(id(ha_dzien).state) ? 40 : id(ha_dzien).state);
+          c14::nadpisz_noc = (uint8_t) (isnan(id(ha_noc).state) ? 30 : id(ha_noc).state);
+          c14::nadpisz_tryb_dzien = id(ha_tryb).active_index().value_or(0) == 0;
+          c14::nadpisz_praca = id(ha_praca).state;
+          c14::nadpisz = id(sterowanie_ha).state;
+          c14::start();
+      # Panel dostaje wartosci z HA (HA jest zrodlem po starcie ESP).
+      - delay: 5s
+      - script.execute: zapisz_do_panelu
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+  hardware_uart: USB_SERIAL_JTAG
+
+wifi:
+  ssid: !secret iot_wifi_ssid
+  password: !secret iot_wifi_password
+  # Siec IoT ze stalym adresem: ESPHome w HA (siec glowna) nie znajdzie urzadzenia przez mDNS za routerem.
+  manual_ip:
+    static_ip: 192.168.20.18
+    gateway: 192.168.20.1
+    subnet: 255.255.255.0
+    dns1: 192.168.1.163
+  use_address: 192.168.20.18
+  ap:
+    ssid: "Rekuperacja"
+    password: !secret c14_ap_password
+
+api:
+  encryption:
+    key: !secret c14_api_key
+  actions:
+    # Proba rozmowy z PANELEM: kroki "WYZW>RAMKA;WYZW>RAMKA;..." wykonywane po kolei. WYZW = bajty [0]:[1] ramki
+    # od panelu, na ktora czekamy (np. "81:44"; "81:*" = dowolny [1]); RAMKA = hex wysylany 'opoznienie_ms' pozniej.
+    # Ramki 30-bajtowe dostaja sume kontrolna [2] automatycznie.
+    - action: rozmowa_z_panelem
+      variables:
+        kroki: string
+        opoznienie_ms: int
+      then:
+        - lambda: |-
+            auto hex = [](const std::string &s) {
+              std::vector<uint8_t> v;
+              for (size_t k = 0; k + 1 < s.size(); ) {
+                v.push_back((uint8_t) strtoul(s.substr(k, 2).c_str(), nullptr, 16));
+                k += 2;
+                while (k < s.size() && (s[k] == ':' || s[k] == ' ')) k++;
+              }
+              return v;
+            };
+            c14::kroki_ile = 0;
+            c14::krok_nr = 0;
+            int n = 0;
+            size_t p = 0;
+            while (p < kroki.size() && n < 6) {
+              size_t q = kroki.find(';', p);
+              std::string krok = kroki.substr(p, q == std::string::npos ? std::string::npos : q - p);
+              p = q == std::string::npos ? kroki.size() : q + 1;
+              size_t gt = krok.find('>');
+              // "++MS>RAMKA" = wyslij MS ms po poprzednim kroku, bez czekania na panel.
+              bool lancuch = krok.size() > 2 && krok[0] == '+' && krok[1] == '+';
+              if (gt == std::string::npos || (!lancuch && gt < 4)) { ESP_LOGE("c14", "Zly krok: %s", krok.c_str()); return; }
+              auto v = hex(krok.substr(gt + 1));
+              if (v.empty() || v.size() > 64) { ESP_LOGE("c14", "Zla ramka w kroku %d", n); return; }
+              if (v.size() == 30) c14::suma_kontrolna(v.data(), v.size());
+              auto &kr = c14::kroki[n];
+              if (lancuch) {
+                kr.b0 = -2;
+                kr.b1 = -1;
+                kr.opoznienie_ms = atoi(krok.substr(2, gt - 2).c_str());
+              } else {
+                kr.b0 = (int) strtoul(krok.substr(0, 2).c_str(), nullptr, 16);
+                kr.b1 = krok[3] == '*' ? -1 : (int) strtoul(krok.substr(3, 2).c_str(), nullptr, 16);
+                kr.opoznienie_ms = opoznienie_ms;
+              }
+              kr.dl = v.size();
+              memcpy(kr.ramka, v.data(), v.size());
+              n++;
+            }
+            c14::kroki_ile = n;
+            ESP_LOGW("c14", "Rozmowa z panelem: %d krokow czeka", n);
+    # Wyslij jedna ramke do PANELU natychmiast (bez czekania na jego zapytanie) - np. gdy panel przestal byc
+    # nadzorca i milczy. Ramka 30-bajtowa dostaje sume kontrolna automatycznie.
+    - action: wyslij_do_panelu
+      variables:
+        ramka: string
+      then:
+        - lambda: |-
+            std::vector<uint8_t> v;
+            for (size_t k = 0; k + 1 < ramka.size(); ) {
+              v.push_back((uint8_t) strtoul(ramka.substr(k, 2).c_str(), nullptr, 16));
+              k += 2;
+              while (k < ramka.size() && (ramka[k] == ':' || ramka[k] == ' ')) k++;
+            }
+            if (v.empty() || v.size() > 64) return;
+            if (v.size() == 30) c14::suma_kontrolna(v.data(), v.size());
+            c14::nadaj(c14::PANEL, v.data(), v.size());
+            std::string out;
+            char b[4];
+            for (size_t k = 0; k < v.size(); k++) { snprintf(b, sizeof(b), k ? ":%02X" : "%02X", v[k]); out += b; }
+            ESP_LOGW("c14", "ESP>panel (od razu) %s", out.c_str());
+    # Proba: podmien bajt [bajt] na [wartosc] w ile kolejnych odpowiedziach rekuperacji do panelu.
+    - action: zmien_stan_dla_panelu
+      variables:
+        bajt: int
+        wartosc: int
+        ile: int
+      then:
+        - lambda: |-
+            c14::stan_bajt = bajt;
+            c14::stan_wartosc = wartosc;
+            c14::stan_ile = ile;
+            ESP_LOGW("c14", "Proba stanu: bajt %d = %02X przez %d ramek", bajt, wartosc & 0x7F, ile);
+    - action: wstrzymaj_adopcje
+      variables:
+        wstrzymaj: bool
+      then:
+        - lambda: |-
+            c14::adopcja_wstrzymana = wstrzymaj;
+            ESP_LOGW("c14", "Przejmowanie zmian z panelu %s", wstrzymaj ? "WSTRZYMANE" : "aktywne");
+
+ota:
+  - platform: esphome
+    password: !secret c14_ota_password
+
+script:
+  # Zapis predkosci dzien/noc, trybu i pracy z HA do PANELU (jego parametry 00:08, 00:09, 00:07, 00:06), zeby panel sam
+  # przekazal je rekuperacji i pokazywal na diodach prawdziwy stan. Opoznienie skleja kilka zmian w jeden zapis.
+  - id: zapisz_do_panelu
+    mode: restart
+    then:
+      - delay: 300ms
+      - lambda: |-
+          int d = isnan(id(ha_dzien).state) ? 40 : (int) id(ha_dzien).state;
+          int n = isnan(id(ha_noc).state) ? 30 : (int) id(ha_noc).state;
+          bool dz = id(ha_tryb).active_index().value_or(0) == 0;
+          bool pr = id(ha_praca).state;
+          c14::zapisz_panel(d, n, dz, pr);
+          ESP_LOGI("c14", "Zapis do panelu: dzien %d%% noc %d%% tryb %s, %s", d, n, dz ? "dzien" : "noc", pr ? "wl" : "wyl");
+
+globals:
+  - id: c14_bledne
+    type: uint32_t
+    initial_value: "0"
+  # Ostatnie ustawienia wyslane przez sam panel (przed podmiana) - do przejecia przy wlaczaniu sterowania.
+  - id: panel_dzien
+    type: int
+    initial_value: "-1"
+  - id: panel_noc
+    type: int
+    initial_value: "-1"
+  - id: panel_bajt19
+    type: int
+    initial_value: "-1"
+
+interval:
+  # Straznik: 2026-11-01 ramka 0x45 do panelu zatrzymala cala komunikacje (panel pikal) i dopiero restart ESP
+  # ja przywrocil. Jesli od panelu nic nie przyjdzie przez 10 s, a od startu juz cos przychodzilo, restart.
+  # Bez ruchu od startu (np. rekuperacja wylaczona z pradu) nie restartujemy w kolko.
+  - interval: 1s
+    then:
+      - lambda: |-
+          static uint32_t poprz = 0, ostatni_ruch = 0;
+          static bool byl_ruch = false;
+          uint32_t teraz = c14::licznik[c14::OD_PANELU].load();
+          if (teraz != poprz) {
+            poprz = teraz;
+            ostatni_ruch = millis();
+            byl_ruch = true;
+          } else if (byl_ruch && millis() - ostatni_ruch > 150000) {
+            // Panel po nieudanej sesji 0x45 sam wraca po ~1-1,5 min (restart ESP mu nie pomaga), wiec ten
+            // restart jest tylko na wypadek zawieszenia samego ESP.
+            ESP_LOGE("c14", "Panel milczy od 150 s - restart ESP");
+            App.safe_reboot();
+          }
+  - interval: 20ms
+    then:
+      - lambda: |-
+          if (c14::zmiana_z_panelu.exchange(false)) {
+            ESP_LOGI("c14", "Zmiana na panelu - przejmuje jego ustawienia do HA");
+            // publish_state zamiast make_call: minimum 30 % dotyczy tylko kafelkow w HA, panel moze ustawic mniej
+            // (make_call odrzucilby taka wartosc i HA rozjechalby sie z panelem).
+            id(ha_dzien).publish_state(c14::nadpisz_dzien.load());
+            id(ha_noc).publish_state(c14::nadpisz_noc.load());
+            id(ha_tryb).make_call().set_index(c14::nadpisz_tryb_dzien.load() ? 0 : 1).perform();
+            if (c14::nadpisz_praca.load()) id(ha_praca).turn_on(); else id(ha_praca).turn_off();
+          }
+          static int panel_poprz = -1;
+          int ps = c14::panel_surowe.load();
+          if (ps >= 0 && ps != panel_poprz) {
+            ESP_LOGW("c14", "Panel (surowe): dzien %d noc %d bajt19 %02X", (ps >> 16) & 0xFF, (ps >> 8) & 0xFF, ps & 0xFF);
+            panel_poprz = ps;
+          }
+          if (c14::odp_wyslana.exchange(false)) {
+            std::string out;
+            char b[4];
+            for (int k = 0; k < c14::odp_dl.load(); k++) { snprintf(b, sizeof(b), k ? ":%02X" : "%02X", c14::odp_ramka[k]); out += b; }
+            ESP_LOGW("c14", "ESP>panel %s", out.c_str());
+          }
+          c14::Ramka r;
+          while (c14::kolejka && xQueueReceive(c14::kolejka, &r, 0) == pdTRUE) {
+            std::vector<uint8_t> bytes(r.b, r.b + r.dl);
+            auto hex = [](const std::vector<uint8_t> &v) {
+              std::string out;
+              char b[4];
+              for (size_t k = 0; k < v.size(); k++) { snprintf(b, sizeof(b), k ? ":%02X" : "%02X", v[k]); out += b; }
+              return out;
+            };
+            ESP_LOGD("c14", "%s%s %s", r.strona == c14::OD_PANELU ? "panel>rekup" : "rekup>panel",
+                     r.zmieniona ? " (HA)" : "", hex(bytes).c_str());
+            if (bytes.size() != 30 || bytes[29] != 0x23) {
+              id(c14_bledne)++;
+              continue;
+            }
+            uint32_t sum = 0;
+            for (size_t k = 0; k < bytes.size(); k++) if (k != 2) sum += bytes[k];
+            if ((sum & 0x7F) != bytes[2]) {
+              ESP_LOGW("c14", "Zla suma kontrolna");
+              id(c14_bledne)++;
+              continue;
+            }
+            // Wykrywanie nieznanych kodow: pierwsza tresc kazdego typu ramki to wzorzec; kazda zmiana
+            // bajtu, ktorego jeszcze nie dekodujemy, trafia do HA.
+            static std::map<uint32_t, std::vector<uint8_t>> wzorce;
+            uint32_t typ = (bytes[0] << 16) | (bytes[1] << 8) | bytes[3];
+            bool znany_typ = typ == 0x81443E || typ == 0xE4213E || typ == 0xE42163 || typ == 0xF0443E ||
+                             typ == 0xE3443E || typ == 0xA9443E ||
+                             typ == 0x81773E;  // odpowiedz panelu na nasz zapis parametrow (kazda zmiana z HA)
+            if (!znany_typ) {
+              ESP_LOGW("c14", "Nowy typ ramki: %s", hex(bytes).c_str());
+              id(c14_nieznane).publish_state("Nowa ramka: " + hex(bytes));
+            } else {
+              auto it = wzorce.find(typ);
+              if (it == wzorce.end()) {
+                wzorce[typ] = bytes;
+              } else {
+                auto &w = it->second;
+                std::string zm;
+                for (size_t k = 3; k < 29; k++) {
+                  bool dekodowany = false;
+                  if (typ == 0xE42163) dekodowany = k == 8 || (k >= 12 && k <= 19);
+                  // [25] wyrzutnia, [26] nawiew, [27] czerpnia: temperatury z AERO zaokraglone do 1 C, okolo T + 45
+                  // (korelacja z czujnikami 0,90-1,00, 2026-11-06) - dekodowane, wiec nie zgłaszamy ich zmian.
+                  if (typ == 0xE4213E) dekodowany = (k >= 16 && k <= 19) || (k >= 25 && k <= 27);
+                  // [28] bit 0x02 w E4:21: znacznik progu czerpni ok. -3,3 C, przeskakuje bez histerezy i nic nie zmienia
+                  // (2026-11-08). Pozostale bity tego bajtu zglaszamy dalej - moze sie tam pokazac odmrazanie.
+                  uint8_t maska = (k == 28 && (typ == 0xE42163 || typ == 0xE4213E)) ? 0xFD : 0xFF;
+                  if (!dekodowany && ((w[k] ^ bytes[k]) & maska)) {
+                    char b[24];
+                    snprintf(b, sizeof(b), "%s[%u] %02X>%02X", zm.empty() ? "" : " ", (unsigned) k, w[k], bytes[k]);
+                    zm += b;
+                  }
+                }
+                if (!zm.empty()) {
+                  char t[8];
+                  snprintf(t, sizeof(t), "%02X:%02X ", bytes[0], bytes[1]);
+                  ESP_LOGW("c14", "Zmiana nieznanych bajtow %s%s", t, zm.c_str());
+                  id(c14_nieznane).publish_state(std::string(t) + zm);
+                  w = bytes;
+                }
+              }
+            }
+            if (bytes[0] != 0xE4 || bytes[1] != 0x21) continue;
+            auto temp = [&](size_t k) { return (((bytes[k] << 7) | bytes[k + 1]) - 2048) / 10.0f; };
+            if (bytes[3] == 0x63) {
+              // [6] = kod awarii (0 = brak); ustalone 2026-11-01 - panel pika, gdy jest niezerowy.
+              // Ramki podmienione na probe (r.zmieniona) nie sa prawdziwym stanem rekuperacji.
+              if (!r.zmieniona) {
+                id(awaria).publish_state(bytes[6] != 0);
+                id(kod_awarii).publish_state(bytes[6]);
+              }
+              id(went_teraz).publish_state(bytes[8]);
+              id(t_nawiew).publish_state(temp(12));
+              id(t_czerpnia).publish_state(temp(14));
+              id(t_wyrzutnia).publish_state(temp(16));
+              id(t_wywiew).publish_state(temp(18));
+            } else if (bytes[3] == 0x3E) {
+              // To, co dostala rekuperacja (po ewentualnej podmianie).
+              id(went_zadana).publish_state(bytes[16]);
+              id(went_dzien).publish_state(bytes[17]);
+              id(went_noc).publish_state(bytes[18]);
+              id(praca).publish_state(bytes[19] & 0x01);
+              id(tryb).publish_state((bytes[19] & 0x02) ? "Dzień" : "Noc");
+              if (!r.zmieniona) {
+                id(panel_dzien) = bytes[17];
+                id(panel_noc) = bytes[18];
+                id(panel_bajt19) = bytes[19];
+              }
+            }
+          }
+
+switch:
+  - platform: template
+    id: sterowanie_ha
+    name: "Sterowanie z HA"
+    icon: mdi:home-assistant
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: |-
+          // Przejmij biezace ustawienia panelu, zeby wlaczenie sterowania niczego nie zmienilo od razu.
+          if (id(panel_bajt19) >= 0) {
+            id(ha_dzien).publish_state(id(panel_dzien));
+            id(ha_noc).publish_state(id(panel_noc));
+            id(ha_tryb).make_call().set_index((id(panel_bajt19) & 0x02) ? 0 : 1).perform();
+            if (id(panel_bajt19) & 0x01) id(ha_praca).turn_on(); else id(ha_praca).turn_off();
+          }
+          c14::nadpisz = true;
+    turn_off_action:
+      - lambda: c14::nadpisz = false;
+  - platform: template
+    id: ha_praca
+    name: "Praca (HA)"
+    icon: mdi:power
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: c14::nadpisz_praca = true;
+      - script.execute: zapisz_do_panelu
+    on_turn_off:
+      - lambda: c14::nadpisz_praca = false;
+      - script.execute: zapisz_do_panelu
+
+number:
+  - platform: template
+    id: ha_dzien
+    name: "Prędkość dzień (HA)"
+    icon: mdi:weather-sunny
+    unit_of_measurement: "%"
+    # Minimum 30 % tylko dla zmian z HA (decyzja uzytkownika 2026-11-03); wartosc z panelu moze byc nizsza.
+    min_value: 30
+    max_value: 100
+    step: 10
+    optimistic: true
+    restore_value: true
+    initial_value: 40
+    on_value:
+      - lambda: c14::nadpisz_dzien = (uint8_t) x;
+      - script.execute: zapisz_do_panelu
+  - platform: template
+    id: ha_noc
+    name: "Prędkość noc (HA)"
+    icon: mdi:weather-night
+    unit_of_measurement: "%"
+    min_value: 30
+    max_value: 100
+    step: 10
+    optimistic: true
+    restore_value: true
+    initial_value: 30
+    on_value:
+      - lambda: c14::nadpisz_noc = (uint8_t) x;
+      - script.execute: zapisz_do_panelu
+
+select:
+  - platform: template
+    id: ha_tryb
+    name: "Tryb (HA)"
+    icon: mdi:theme-light-dark
+    options: ["Dzień", "Noc"]
+    initial_option: "Dzień"
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: c14::nadpisz_tryb_dzien = (i == 0);
+      - script.execute: zapisz_do_panelu
+
+sensor:
+  - platform: template
+    id: t_nawiew
+    name: "Temperatura nawiewu"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - throttle: 30s
+  - platform: template
+    id: t_czerpnia
+    name: "Temperatura czerpni"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - throttle: 30s
+  - platform: template
+    id: t_wyrzutnia
+    name: "Temperatura wyrzutni"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - throttle: 30s
+  - platform: template
+    id: t_wywiew
+    name: "Temperatura wywiewu"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - throttle: 30s
+  - platform: template
+    id: went_teraz
+    name: "Wentylatory"
+    unit_of_measurement: "%"
+    icon: mdi:fan
+    state_class: measurement
+    accuracy_decimals: 0
+    filters:
+      - delta: 1
+  - platform: template
+    id: went_zadana
+    name: "Prędkość zadana"
+    unit_of_measurement: "%"
+    icon: mdi:fan
+    accuracy_decimals: 0
+    filters:
+      - delta: 1
+  - platform: template
+    id: went_dzien
+    name: "Prędkość dzień"
+    unit_of_measurement: "%"
+    icon: mdi:weather-sunny
+    accuracy_decimals: 0
+    filters:
+      - delta: 1
+  - platform: template
+    id: went_noc
+    name: "Prędkość noc"
+    unit_of_measurement: "%"
+    icon: mdi:weather-night
+    accuracy_decimals: 0
+    filters:
+      - delta: 1
+  - platform: template
+    name: "Sprawność odzysku"
+    unit_of_measurement: "%"
+    icon: mdi:heat-wave
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      float zew = id(t_czerpnia).state, dom = id(t_wywiew).state, naw = id(t_nawiew).state;
+      if (isnan(zew) || isnan(dom) || isnan(naw) || id(went_teraz).state < 1 || fabsf(dom - zew) < 5) return NAN;
+      return (naw - zew) / (dom - zew) * 100.0f;
+  - platform: template
+    name: "Błędne ramki C14"
+    icon: mdi:alert-circle-outline
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 300s
+    lambda: return id(c14_bledne);
+  - platform: template
+    name: "Ramki od panelu"
+    icon: mdi:swap-horizontal
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return c14::licznik[c14::OD_PANELU].load();
+  - platform: template
+    name: "Ramki od rekuperacji"
+    icon: mdi:swap-horizontal
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return c14::licznik[c14::OD_STEROWNIKA].load();
+  - platform: template
+    id: kod_awarii
+    name: "Kod awarii"
+    icon: mdi:alert-octagon-outline
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    filters:
+      - delta: 1
+  - platform: wifi_signal
+    name: "Sygnał Wi-Fi"
+    update_interval: 300s
+    entity_category: diagnostic
+
+binary_sensor:
+  - platform: template
+    id: praca
+    name: "Praca"
+    device_class: running
+  - platform: template
+    id: awaria
+    name: "Awaria"
+    device_class: problem
+
+text_sensor:
+  - platform: template
+    id: tryb
+    name: "Tryb"
+    icon: mdi:theme-light-dark
+  - platform: template
+    id: c14_nieznane
+    name: "Nieznana zmiana C14"
+    icon: mdi:help-circle-outline
+    entity_category: diagnostic
