@@ -37,6 +37,43 @@ Powrót do stanu pierwotnego: wyłącz zasilanie rekuperacji, odłącz moduły R
 przewody A z panelu i z AERO oraz B z panelu i z AERO. G i U pozostają bez zmian. Panel i AERO
 działają wtedy jak przed instalacją.
 
+## Lista części (BOM)
+
+| Ilość | Część | Uwagi |
+|---|---|---|
+| 1 | Płytka ESP32-S3 DevKit (użyta: ESP32-S3-N16R8) | konfiguracja: `esp32-s3-devkitc-1`, flash 4 MB |
+| 2 | Moduł TTL–RS485 „RS485 V2.05” z wejściem EN | zasilany z 3,3 V; trzeba usunąć rezystor 120 Ω „121” |
+| 1 | Przewody połączeniowe | do ESP i do zacisków A, B, G |
+| 1 | Złączki do rozcięcia A i B | ułatwiają powrót do oryginalnego połączenia |
+| 1 | Obudowa | opcjonalnie |
+
+Do tego wybierz **jeden** ze sposobów zasilania ESP:
+
+| Wariant | Części | Uwagi |
+|---|---|---|
+| **A. Ładowarka USB** | ładowarka 5 V, kabel USB | ładowarka musi być dobrej jakości: tania wprowadzała zakłócenia na magistralę |
+| **B. Z linii U z AERO (17 V)** | **dodatkowo** przetwornica obniżająca Pololu **D24V5F5** (5 V, 0,5 A, wejście do 36 V) | nie trzeba gniazdka ani ładowarki przy centrali |
+
+Podłączenie wariantu B:
+
+| D24V5F5 | Gdzie |
+|---|---|
+| VIN | przewód U magistrali (17 V) |
+| GND | przewód G magistrali, wspólna masa z ESP |
+| VOUT | pin **5V** ESP32-S3, **nie** 3V3 |
+| SHDN | niepodłączony |
+
+W wariancie B:
+
+- Przed podłączeniem do ESP zmierz VOUT miernikiem: powinno być ok. 5 V.
+- Nie podłączaj jednocześnie kabla USB. Do aktualizacji wystarczy Wi-Fi, a przy wgrywaniu przez
+  USB najpierw odłącz przetwornicę.
+- Wydajność prądowa linii U nie jest znana, a zasila ona też panel. ESP z modułami pobiera
+  szacunkowo 0,1–0,25 A przy 5 V. Po podłączeniu sprawdź, czy panel działa normalnie i czy ESP
+  nie restartuje się samo.
+
+Narzędzia: lutownica do usunięcia rezystora, miernik, kabel USB do pierwszego wgrania firmware.
+
 ## Sprzęt
 
 ESP32-S3-N16R8 DevKit oraz dwa moduły „RS485 V2.05” z usuniętym rezystorem 120 Ω („121”).
