@@ -52,7 +52,7 @@ Do tego wybierz **jeden** ze sposobów zasilania ESP:
 | Wariant | Części | Uwagi |
 |---|---|---|
 | **A. Ładowarka USB** | ładowarka 5 V, kabel USB | ładowarka musi być dobrej jakości: tania wprowadzała zakłócenia na magistralę |
-| **B. Z linii U z AERO (17 V)** | **dodatkowo** przetwornica obniżająca Pololu **D24V5F5** (5 V, 0,5 A, wejście do 36 V) | nie trzeba gniazdka ani ładowarki przy centrali |
+| **B. Z linii U z AERO (17 V)** | **dodatkowo** przetwornica obniżająca Pololu **D24V5F5** (5 V, 0,5 A, wejście do 36 V) | nie trzeba gniazdka ani ładowarki przy centrali; **sprawdzone w działaniu** na AERO 6 z NANO XS |
 
 Podłączenie wariantu B:
 
@@ -68,9 +68,9 @@ W wariancie B:
 - Przed podłączeniem do ESP zmierz VOUT miernikiem: powinno być ok. 5 V.
 - Nie podłączaj jednocześnie kabla USB. Do aktualizacji wystarczy Wi-Fi, a przy wgrywaniu przez
   USB najpierw odłącz przetwornicę.
-- Wydajność prądowa linii U nie jest znana, a zasila ona też panel. ESP z modułami pobiera
-  szacunkowo 0,1–0,25 A przy 5 V. Po podłączeniu sprawdź, czy panel działa normalnie i czy ESP
-  nie restartuje się samo.
+- Linia U zasila też panel, a jej wydajność prądowa nie jest podana. Na AERO 6 z NANO XS wystarcza.
+  W innym zestawie sprawdź po podłączeniu, czy panel działa normalnie i czy ESP nie restartuje się
+  samo. ESP z modułami pobiera szacunkowo 0,1–0,25 A przy 5 V.
 
 Narzędzia: lutownica do usunięcia rezystora, miernik, kabel USB do pierwszego wgrania firmware.
 
