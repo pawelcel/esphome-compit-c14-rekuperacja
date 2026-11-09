@@ -23,7 +23,8 @@ na magistrali i numery parametrów mogą być inne w innych zestawach.
 W innym zestawie zacznij od samego odczytu:
 
 1. Sprawdź, czy ramki się dekodują i czy temperatury zgadzają się z rzeczywistością.
-2. Odczytaj wszystkie parametry panelu poleceniem `0x52`.
+2. Odczytaj wszystkie parametry panelu poleceniem `0x52`. Potrzebna jest do tego akcja
+   `rozmowa_z_panelem` z wersji `fb5ead5`, bo obecny firmware jej nie ma.
 3. Zmień coś na panelu przyciskiem i odczytaj je ponownie. Różnica pokaże numer parametru.
 4. Dopiero potem zapisuj, i tylko parametry, których znaczenie już znasz.
 
@@ -154,9 +155,10 @@ wyliczana, gdy wentylatory stoją albo różnica temperatur jest mniejsza niż 5
 | `sensor.rekuperacja_bledne_ramki_c14` | licznik błędnych ramek |
 | `sensor.rekuperacja_sygnal_wi_fi` | sygnał Wi-Fi, dBm |
 
-Firmware udostępnia też akcje diagnostyczne `rozmowa_z_panelem`, `wyslij_do_panelu`,
-`zmien_stan_dla_panelu` i `wstrzymaj_adopcje`. Służą do badania protokołu i mogą wysyłać dowolne
-ramki do panelu, więc nie należy używać ich w automatyzacjach.
+Akcje diagnostyczne (`rozmowa_z_panelem`, `wyslij_do_panelu`, `zmien_stan_dla_panelu`,
+`wstrzymaj_adopcje`) zostały usunięte z firmware, bo mogły wysłać do panelu dowolną ramkę.
+Ostatnia wersja, która je zawiera, to commit `fb5ead5`. Wgraj ją tylko do badania protokołu lub
+naprawy i nie używaj tych akcji w automatyzacjach.
 
 ## Protokół C14
 
@@ -230,7 +232,7 @@ Wartość to `n + 2000` w zapisie 7-bitowym; `5D:5F` oznacza brak parametru.
 | ESP nie nadaje | EN musi być w stanie wysokim podczas nadawania. |
 | Panel pika, `kod_awarii` różny od 0 | AERO zgłasza awarię, sprawdź kod na panelu. |
 | Panel pika i milczy ok. 1–1,5 min | Po poleceniu `0x45` lub `0x46` wraca sam. Restart ESP tego nie przyspiesza. |
-| Panel przestał odpytywać magistralę | Prawdopodobnie zapisano 0 do 00:02. Zapisz 1 akcją `wyslij_do_panelu`, bo wysyła ona ramkę od razu, bez czekania na odpytanie. |
+| Panel przestał odpytywać magistralę | Prawdopodobnie zapisano 0 do 00:02 (ten firmware tego parametru nie zapisuje). Wgraj wersję `fb5ead5` i zapisz 1 akcją `wyslij_do_panelu`, bo wysyła ona ramkę od razu, bez czekania na odpytanie. |
 | Zmiana z HA nie pojawia się na panelu | Sprawdź, czy rosną oba liczniki ramek. Zapis idzie dopiero po odpytaniu `81:44` z cyklu trwającego ok. 4 s. |
 | Urządzenie niedostępne w HA | Sprawdź adres IP, klucz API i port TCP 6053 na zaporze. Słaby sygnał przy centrali też może rozłączać. |
 
