@@ -81,13 +81,45 @@ ESP32-S3-N16R8 DevKit oraz dwa moduły „RS485 V2.05” z usuniętym rezystorem
 Opisy pinów modułu są z jego punktu widzenia: dane wychodzą na TXD. EN w stanie wysokim oznacza
 nadawanie.
 
-| Moduł | TXD | RXD | EN | A/B |
-|---|---|---|---|---|
-| P (panel) | GPIO8 | GPIO9 | GPIO10 | przewody do panelu |
-| S (rekuperacja) | GPIO4 | GPIO5 | GPIO6 | zaciski w AERO |
+## Pinout
 
-VCC modułów do 3V3, GND do G magistrali. G i U przechodzą między panelem a AERO bez zmian.
-U to 17 V zasilania panelu; nie podłączać bezpośrednio do ESP.
+```
+                 Moduł P                 ESP32-S3                Moduł S
+ PANEL  A ──── A  TXD ──────────► GPIO8    GPIO4 ◄────────── TXD  A ──── A  AERO
+ NANO   B ──── B  RXD ◄────────── GPIO9    GPIO5 ──────────► RXD  B ──── B  (zaciski)
+ XS               EN  ◄────────── GPIO10   GPIO6 ──────────► EN
+                  VCC ◄────────── 3V3      3V3 ────────────► VCC
+                  GND ─────────── GND      GND ───────────── GND
+
+        G ─────────────────── G magistrali, wspólna masa ─────────────── G
+        U ─────────────────── 17 V, przechodzi bez zmian ─────────────── U
+```
+
+**Moduł P** (strona panelu, UART1)
+
+| Pin modułu | ESP32-S3 | Kierunek | Funkcja |
+|---|---|---|---|
+| TXD | GPIO8 | moduł → ESP | odbiór (UART1 RX) |
+| RXD | GPIO9 | ESP → moduł | nadawanie (UART1 TX) |
+| EN | GPIO10 | ESP → moduł | wysoki = nadawanie, niski = odbiór |
+| VCC | 3V3 | | zasilanie modułu |
+| GND | GND | | masa, połączona z G magistrali |
+| A, B | przewody A, B do panelu | | |
+
+**Moduł S** (strona AERO, UART2)
+
+| Pin modułu | ESP32-S3 | Kierunek | Funkcja |
+|---|---|---|---|
+| TXD | GPIO4 | moduł → ESP | odbiór (UART2 RX) |
+| RXD | GPIO5 | ESP → moduł | nadawanie (UART2 TX) |
+| EN | GPIO6 | ESP → moduł | wysoki = nadawanie, niski = odbiór |
+| VCC | 3V3 | | zasilanie modułu |
+| GND | GND | | masa, połączona z G magistrali |
+| A, B | zaciski A, B w AERO | | |
+
+Numery pinów ustawia `c14_relay.h`. G i U przechodzą między panelem a AERO bez zmian. U to 17 V:
+**nigdy nie podłączaj tej linii bezpośrednio do ESP**, tylko przez przetwornicę (wariant B w liście
+części).
 
 ## Instalacja w Home Assistant
 

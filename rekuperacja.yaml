@@ -10,9 +10,9 @@
 #                                 A/B -> przewody A/B idace do PANELU, GND -> G
 #   Modul S (strona rekuperacji): TXD -> GPIO4, RXD -> GPIO5, EN -> GPIO6,  VCC -> 3V3, GND -> GND
 #                                 A/B -> zaciski A/B w REKUPERACJI (AERO), GND -> G
-#   G i U miedzy panelem a rekuperacja zostaja polaczone bez zmian (U = 17 V zasilania panelu, nie do ESP).
+#   G i U miedzy panelem a rekuperacja zostaja polaczone bez zmian (U = 17 V, do ESP tylko przez przetwornice).
 #   EN: LOW = odbior, HIGH = nadawanie (sprawdzone testem zaklocenia 2026-11-01).
-#   Zasilanie ESP z dobrej ladowarki - stara wprowadzala szum 16 kHz.
+#   Zasilanie ESP: z linii U przez Pololu D24V5F5 do pinu 5V albo z dobrej ladowarki (slaba wprowadzala szum 16 kHz).
 #
 # Protokol (ustalony podsluchem 2026-11-01): 9600 8N1, ramki 30 bajtow konczace sie 0x23,
 # bajt [2] = suma pozostalych bajtow mod 128. Dane 7-bitowe.
