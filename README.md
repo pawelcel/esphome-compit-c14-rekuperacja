@@ -15,6 +15,28 @@ na diodach prawdziwy stan.
 - `c14_relay.h`: przekaźnik ramek na UART1/UART2 w zadaniach FreeRTOS
 - `secrets.yaml.example`: nazwy sekretów do uzupełnienia
 
+## Z czym to działa
+
+Sprawdzone tylko na jednej instalacji: sterownik **Compit AERO 6** z panelem **NANO XS**. Adresy
+na magistrali i numery parametrów mogą być inne w innych zestawach.
+
+W innym zestawie zacznij od samego odczytu:
+
+1. Sprawdź, czy ramki się dekodują i czy temperatury zgadzają się z rzeczywistością.
+2. Odczytaj wszystkie parametry panelu poleceniem `0x52`.
+3. Zmień coś na panelu przyciskiem i odczytaj je ponownie. Różnica pokaże numer parametru.
+4. Dopiero potem zapisuj, i tylko parametry, których znaczenie już znasz.
+
+## Gdy ESP nie działa
+
+Przewody A i B są rozcięte, więc **bez działającego i zasilanego ESP panel nie ma łączności z
+AERO**. Panel może wtedy pikać. Nie sprawdzano, jak AERO zachowuje się przez dłuższy czas bez
+komunikacji z panelem.
+
+Powrót do stanu pierwotnego: wyłącz zasilanie rekuperacji, odłącz moduły RS485 i połącz ze sobą
+przewody A z panelu i z AERO oraz B z panelu i z AERO. G i U pozostają bez zmian. Panel i AERO
+działają wtedy jak przed instalacją.
+
 ## Sprzęt
 
 ESP32-S3-N16R8 DevKit oraz dwa moduły „RS485 V2.05” z usuniętym rezystorem 120 Ω („121”).
@@ -161,4 +183,27 @@ Wartość to `n + 2000` w zapisie 7-bitowym; `5D:5F` oznacza brak parametru.
 - Sekwencje `0x45`/`0x46` wyciszają panel na ponad minutę, a watchdog restartuje ESP dopiero po
   150 s ciszy.
 - Na kafelkach HA minimalna prędkość to 30 %. Panel ma pełny zakres, a ESP go nie ogranicza.
-- Sposób działania odmrażania na magistrali nie jest jeszcze znany.
+
+## Rozwiązywanie problemów
+
+| Objaw | Co sprawdzić |
+|---|---|
+| Brak ramek, liczniki stoją | Opisy pinów modułu są z jego punktu widzenia: dane wychodzą na **TXD**. Zamień A i B, jeśli nadal nic nie ma. |
+| Dużo błędnych ramek | Usuń z modułów rezystor 120 Ω „121”. Wymień ładowarkę zasilającą ESP: zaszumiona dawała zakłócenia ok. 16 kHz. |
+| ESP nie nadaje | EN musi być w stanie wysokim podczas nadawania. |
+| Panel pika, `kod_awarii` różny od 0 | AERO zgłasza awarię, sprawdź kod na panelu. |
+| Panel pika i milczy ok. 1–1,5 min | Po poleceniu `0x45` lub `0x46` wraca sam. Restart ESP tego nie przyspiesza. |
+| Panel przestał odpytywać magistralę | Prawdopodobnie zapisano 0 do 00:02. Zapisz 1 akcją `wyslij_do_panelu`, bo wysyła ona ramkę od razu, bez czekania na odpytanie. |
+| Zmiana z HA nie pojawia się na panelu | Sprawdź, czy rosną oba liczniki ramek. Zapis idzie dopiero po odpytaniu `81:44` z cyklu trwającego ok. 4 s. |
+| Urządzenie niedostępne w HA | Sprawdź adres IP, klucz API i port TCP 6053 na zaporze. Słaby sygnał przy centrali też może rozłączać. |
+
+## Czego jeszcze nie wiadomo
+
+- Jak na magistrali wygląda odmrażanie. Nie wystąpiło jeszcze przy −7,2 °C na czerpni.
+- Co robi polecenie `0x54`.
+- Znaczenie bitu 0x02 w bajcie [28]: przełącza się przy czerpni ok. −3,3 °C i nie zmienia pracy
+  wentylatorów, a firmware pomija go w „Nieznanej zmianie C14”.
+- Bit 0x08 bajtu [28] stanu ustawia w ramce panelu [11] = `0x20`. Możliwe, że to by-pass.
+- Większość parametrów panelu 00:00–00:28 i pozostałe bajty ramki stanu.
+
+Nowe wartości pokazuje `sensor.rekuperacja_nieznana_zmiana_c14`.

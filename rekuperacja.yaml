@@ -1,9 +1,9 @@
 # Przekaznik magistrali C14 (RS485) miedzy panelem NANO XS a sterownikiem Compit AERO 6, ze sterowaniem z HA.
 # Przewody A i B sa ROZCIETE: ESP32 z dwoma modulami RS485 przepisuje kazda ramke z jednej strony na druga
-# (kod w c14_relay.h). Gdy wlaczone jest "Sterowanie z HA", ramka ustawien od panelu jest podmieniana
-# wartosciami z HA zanim trafi do rekuperacji. Wylaczone = przezroczysty przekaznik.
-# Ostatnia zmiana wygrywa: zmiana na panelu przy wlaczonym sterowaniu przepisuje wartosci panelu do HA.
-# Panel pokazuje (diody) zawsze WLASNE ustawienia - nie wie o podmianie.
+# (kod w c14_relay.h) bez zmian, wiec funkcje AERO (np. rozmrazanie) dzialaja jak bez ESP.
+# HA steruje przez zapis parametrow panelu (00:06 praca, 00:07 tryb, 00:08 dzien, 00:09 noc). Panel sam przekazuje
+# je do AERO i pokazuje na diodach prawdziwy stan. Ostatnia zmiana wygrywa: zmiana na panelu trafia do encji HA.
+# "Sterowanie z HA" to starsza metoda, podmiana ramki ustawien w drodze do AERO; powinna zostac wylaczona.
 #
 # Okablowanie (moduly "RS485 V2.05", opisy pinow z punktu widzenia MODULU, rezystory 120 R "121" usuniete):
 #   Modul P (strona panelu):      TXD -> GPIO8, RXD -> GPIO9, EN -> GPIO10, VCC -> 3V3, GND -> GND
