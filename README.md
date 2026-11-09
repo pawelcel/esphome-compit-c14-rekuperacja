@@ -278,3 +278,11 @@ Wartość to `n + 2000` w zapisie 7-bitowym; `5D:5F` oznacza brak parametru.
 - Większość parametrów panelu 00:00–00:28 i pozostałe bajty ramki stanu.
 
 Nowe wartości pokazuje `sensor.rekuperacja_nieznana_zmiana_c14`.
+
+## Licencja i odpowiedzialność
+
+Kod i dokumentacja są udostępnione na licencji [MIT](LICENSE), bez żadnej gwarancji. Projekt
+ingeruje w instalację wentylacji: montaż i użycie są na własne ryzyko, a przeróbka może mieć wpływ
+na gwarancję urządzenia.
+
+Projekt nie jest powiązany z firmami Compit ani ECS. Nazwy produktów należą do ich właścicieli.
