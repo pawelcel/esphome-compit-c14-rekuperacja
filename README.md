@@ -127,9 +127,9 @@ części).
 2. Skopiuj `rekuperacja.yaml` i `c14_relay.h` do `/config/esphome`.
 3. Dopisz do `/config/esphome/secrets.yaml` wartości z `secrets.yaml.example`. Klucz API
    wygenerujesz poleceniem `openssl rand -base64 32`.
-4. W `rekuperacja.yaml` ustaw własne `manual_ip` i `use_address` w sekcji `wifi`.
+4. W tym samym pliku ustaw własne adresy `c14_static_ip`, `c14_gateway` i `c14_dns`.
 5. Pierwszy raz wgraj firmware przez USB, kolejne razy przez Wi-Fi:
-   `esphome run rekuperacja.yaml --device 192.168.20.18`
+   `esphome run rekuperacja.yaml --device <adres-ip-esp>`
 6. W HA wejdź w Ustawienia → Urządzenia i usługi → Dodaj integrację → **ESPHome**. Podaj adres
    IP urządzenia, port 6053 i klucz API z `c14_api_key`.
 

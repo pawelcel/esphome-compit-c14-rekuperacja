@@ -59,11 +59,11 @@ wifi:
   password: !secret iot_wifi_password
   # Siec IoT ze stalym adresem: ESPHome w HA (siec glowna) nie znajdzie urzadzenia przez mDNS za routerem.
   manual_ip:
-    static_ip: 192.168.20.18
-    gateway: 192.168.20.1
+    static_ip: !secret c14_static_ip
+    gateway: !secret c14_gateway
     subnet: 255.255.255.0
-    dns1: 192.168.1.163
-  use_address: 192.168.20.18
+    dns1: !secret c14_dns
+  use_address: !secret c14_static_ip
   ap:
     ssid: "Rekuperacja"
     password: !secret c14_ap_password
