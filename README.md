@@ -29,13 +29,75 @@ nadawanie.
 VCC modułów do 3V3, GND do G magistrali. G i U przechodzą między panelem a AERO bez zmian.
 U to 17 V zasilania panelu; nie podłączać bezpośrednio do ESP.
 
-## Wgrywanie
+## Instalacja w Home Assistant
 
-1. Skopiuj `secrets.yaml.example` jako `secrets.yaml` i uzupełnij.
-2. `esphome run rekuperacja.yaml --device 192.168.20.18`
+1. Zainstaluj dodatek **ESPHome Device Builder**.
+2. Skopiuj `rekuperacja.yaml` i `c14_relay.h` do `/config/esphome`.
+3. Dopisz do `/config/esphome/secrets.yaml` wartości z `secrets.yaml.example`. Klucz API
+   wygenerujesz poleceniem `openssl rand -base64 32`.
+4. W `rekuperacja.yaml` ustaw własne `manual_ip` i `use_address` w sekcji `wifi`.
+5. Pierwszy raz wgraj firmware przez USB, kolejne razy przez Wi-Fi:
+   `esphome run rekuperacja.yaml --device 192.168.20.18`
+6. W HA wejdź w Ustawienia → Urządzenia i usługi → Dodaj integrację → **ESPHome**. Podaj adres
+   IP urządzenia, port 6053 i klucz API z `c14_api_key`.
+
+Jeśli ESP jest w innej sieci niż HA, nie zostanie wykryte automatycznie, dlatego dodaje się je po
+adresie IP. Zapora musi przepuszczać ruch z HA do ESP na porcie TCP 6053.
 
 ESP stoi na drodze sygnału, więc przy restarcie panel na chwilę traci połączenie z AERO i może
 zapikać.
+
+## Encje w Home Assistant
+
+Urządzenie nazywa się „Rekuperacja”, więc identyfikatory mają przedrostek `rekuperacja_`.
+
+**Sterowanie**
+
+| Encja | Znaczenie |
+|---|---|
+| `switch.rekuperacja_praca_ha` | włączenie i wyłączenie rekuperacji |
+| `select.rekuperacja_tryb_ha` | tryb: Dzień lub Noc |
+| `number.rekuperacja_predkosc_dzien_ha` | prędkość dzienna, 30–100 % co 10 % |
+| `number.rekuperacja_predkosc_noc_ha` | prędkość nocna, 30–100 % co 10 % |
+| `switch.rekuperacja_sterowanie_z_ha` | podmiana ramek ustawień w drodze do AERO, **powinna być wyłączona** |
+
+Zmiana na panelu jest przepisywana do tych encji, więc obowiązuje ostatnia zmiana, z HA albo z
+panelu. Przy włączonym `sterowanie_z_ha` ESP przestaje przekazywać ramki ustawień bez zmian.
+
+**Odczyty**
+
+| Encja | Znaczenie |
+|---|---|
+| `sensor.rekuperacja_temperatura_nawiewu` | powietrze nawiewane do domu, °C |
+| `sensor.rekuperacja_temperatura_wywiewu` | powietrze wyciągane z domu, °C |
+| `sensor.rekuperacja_temperatura_czerpni` | powietrze z zewnątrz, °C |
+| `sensor.rekuperacja_temperatura_wyrzutni` | powietrze wyrzucane na zewnątrz, °C |
+| `sensor.rekuperacja_wentylatory` | rzeczywista prędkość wentylatorów, % |
+| `sensor.rekuperacja_predkosc_zadana` | prędkość zadana w tej chwili, % |
+| `sensor.rekuperacja_predkosc_dzien` | prędkość dzienna z panelu, % |
+| `sensor.rekuperacja_predkosc_noc` | prędkość nocna z panelu, % |
+| `sensor.rekuperacja_tryb` | tryb z panelu |
+| `sensor.rekuperacja_sprawnosc_odzysku` | sprawność odzysku liczona na ESP, % |
+| `binary_sensor.rekuperacja_praca` | czy rekuperacja pracuje |
+
+Sprawność to `(nawiew − czerpnia) / (wywiew − czerpnia) × 100`, liczona co 60 s. Nie jest
+wyliczana, gdy wentylatory stoją albo różnica temperatur jest mniejsza niż 5 °C.
+
+**Diagnostyka**
+
+| Encja | Znaczenie |
+|---|---|
+| `binary_sensor.rekuperacja_awaria` | AERO zgłasza awarię |
+| `sensor.rekuperacja_kod_awarii` | kod awarii (bajt [6] stanu), 0 = brak |
+| `sensor.rekuperacja_nieznana_zmiana_c14` | ostatnia zmiana niezdekodowanego bajtu lub nowy typ ramki |
+| `sensor.rekuperacja_ramki_od_panelu` | licznik ramek od panelu |
+| `sensor.rekuperacja_ramki_od_rekuperacji` | licznik ramek od AERO |
+| `sensor.rekuperacja_bledne_ramki_c14` | licznik błędnych ramek |
+| `sensor.rekuperacja_sygnal_wi_fi` | sygnał Wi-Fi, dBm |
+
+Firmware udostępnia też akcje diagnostyczne `rozmowa_z_panelem`, `wyslij_do_panelu`,
+`zmien_stan_dla_panelu` i `wstrzymaj_adopcje`. Służą do badania protokołu i mogą wysyłać dowolne
+ramki do panelu, więc nie należy używać ich w automatyzacjach.
 
 ## Protokół C14
 
